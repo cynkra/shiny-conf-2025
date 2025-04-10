@@ -1,0 +1,452 @@
+---
+title: "No-code data analysis and dashboards with the blockr ecosystem"
+author: Nicolas Bennett
+date: April 10, 2025
+format:
+  revealjs:
+    progress: true
+    controls: false
+    transition: slide
+---
+
+# What is blockr about?
+
+## Blocks! {transition="slide-in none-out"}
+
+![ ](img/lego_blocks.jpeg){fig-align="center"}
+
+## Blocks! {transition="none"}
+
+![ ](img/lego_stack.jpeg){fig-align="center"}
+
+## Blocks! {transition="none-in slide-out"}
+
+![ ](img/lego_names.jpeg){fig-align="center"}
+
+# Demo
+
+## Analysis
+
+How do different models of planes perform? What about Airbus vs. Boeing?
+
+```{r}
+#| include: false
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+#| echo: true
+#| code-line-numbers: "1-4|6-9|11-15"
+pln <- nycflights13::planes |>
+  filter(seats >= 150) |>
+  select(tailnum, manufacturer, model) |>
+  mutate(manufacturer = sub(" INDUSTRIE$", "", manufacturer))
+
+dat <- nycflights13::flights |>
+  mutate(delay = -(arr_delay - dep_delay)) |>
+  select(tailnum, delay) |>
+  inner_join(pln, by = "tailnum")
+
+dat <- dat |>
+  summarize(count = n(), .by = c(manufacturer, model)) |>
+  mutate(pos = rank(-count)) |>
+  filter(pos <= 10) |>
+  left_join(dat, by = c("manufacturer", "model"))
+```
+
+## Endpoints
+
+::: columns
+::: {.column width="50%"}
+
+```{r}
+#| echo: true
+t.test(
+  delay ~ manufacturer,
+  data = dat
+)
+```
+
+:::
+
+::: {.column width="50%"}
+
+```{r}
+#| layout-ncol: 1
+ggplot(dat, aes(delay, model)) +
+  geom_boxplot()
+ggplot(dat, aes(delay, color = manufacturer)) +
+  geom_histogram()
+```
+
+:::
+:::
+
+## Interactive blockr dashboard
+
+```{r}
+#| eval: false
+library(blockr.ui)
+library(blockr.core)
+library(blockr.dplyr)
+library(blockr.ggplot)
+
+run_demo_app(
+  blocks = c(
+    a1 = new_dataset_block("planes", "nycflights13", name = "Flights"),
+    a2 = new_filter_block("seats >= 150"),
+    a3 = new_select_block(c("tailnum", "manufacturer", "model")),
+    a4 = new_mutate_block(
+      list(manufacturer = "sub(\" INDUSTRIE$\", \"\", manufacturer)")
+    ),
+    b1 = new_dataset_block("flights", "nycflights13", name = "Planes"),
+    b2 = new_mutate_block(list(delay = "-(arr_delay - dep_delay)")),
+    b3 = new_select_block(c("tailnum", "delay")),
+    c1 = new_join_block("inner", "tailnum"),
+    c2 = new_summarize_block(
+      list(count = "dplyr::n()"),
+      c("manufacturer", "model")
+    ),
+    c3 = new_mutate_block(list(pos = "rank(-count)")),
+    c4 = new_filter_block("pos <= 10"),
+    c5 = new_join_block("left", c("manufacturer", "model")),
+    d1 = new_boxplot_block("delay", "model"),
+    d2 = new_histogram_block("delay", "manufacturer"),
+    d3 = new_ttest_block("delay", "manufacturer")
+  ),
+  links = c(
+    a1a2 = new_link("a1", "a2"),
+    a2a3 = new_link("a2", "a3"),
+    a3a4 = new_link("a3", "a4"),
+    b1b2 = new_link("b1", "b2"),
+    b2b3 = new_link("b2", "b3"),
+    b3c1 = new_link("b3", "c1", "y"),
+    a4c1 = new_link("a4", "c1", "x"),
+    c1c2 = new_link("c1", "c2"),
+    c2c3 = new_link("c2", "c3"),
+    c3c4 = new_link("c3", "c4"),
+    c4c5 = new_link("c4", "c5", "x"),
+    c1c5 = new_link("c1", "c5", "y"),
+    c5d1 = new_link("c5", "d1"),
+    c5d2 = new_link("c5", "d2"),
+    c5d3 = new_link("c5", "d3")
+  ),
+  stacks = list(
+    a = paste0("a", 1:4),
+    b = paste0("b", 1:3),
+    c = paste0("c", 1:5),
+    d = paste0("d", 1:3)
+  )
+)
+```
+
+![Graph view with blocks to the side](img/flights_1.png)
+
+# Extensibility
+
+## A framework?
+
+- [blockr.core](https://github.com/cynkra/blockr.core) objects/tools for creating blocks/links/stacks and managing a board
+- [blockr.ui](https://github.com/cynkra/blockr.ui) front end, extending the core functionality
+- Block packages such as [blockr.dplyr](https://github.com/cynkra/blockr.dplyr)
+
+We provide 2 APIs: one for adding blocks and one for customizing/extending the front end.
+
+## Adding a new block (1/5) {transition="slide-in none-out"}
+
+1. Specify a block constructor
+
+```{r}
+#| echo: true
+#| code-line-numbers: "2|3-7|8-12|13"
+new_lm_block <- function(response = character(), ...) {
+  new_block(
+    server = function(id, dat) {
+      moduleServer(
+        # ...
+      )
+    },
+    ui = function(id) {
+      tagList(
+        # ...
+      )
+    },
+    class = c("lm_block", "model_block"),
+    ...
+  )
+}
+```
+
+## Adding a new block (1/5) {transition="none-in slide-out"}
+
+1. Specify a block constructor
+
+```{r}
+#| echo: true
+#| code-line-numbers: "29-31|8-9|11-15|18-23|24"
+new_lm_block <- function(response = character(), ...) {
+  new_block(
+    server = function(id, dat) {
+      moduleServer(
+        id,
+        function(input, output, session) {
+
+          resp <- reactiveVal(response)
+          observeEvent(input$resp, resp(input$resp))
+
+          cols <- reactive(colnames(dat()))
+          observeEvent(
+            cols(),
+            updateSelectInput(session, "resp", "Response", cols(), resp())
+          )
+
+          list(
+            expr = reactive(
+              bquote(
+                stats::lm(.(y) ~ ., data = dat),
+                list(y = as.name(resp()))
+              )
+            ),
+            state = list(response = resp)
+          )
+        }
+      )
+    },
+    ui = function(id) {
+      selectInput(NS(id, "resp"), "Response", response, response)
+    },
+    class = c("lm_block", "model_block"),
+    ...
+  )
+}
+```
+
+## Adding a new block (2/5)
+
+2. (Optionally) provide some generic implementations for display
+
+```{r}
+#| echo: true
+block_ui.model_block <- function(id, x, ...) {
+  verbatimTextOutput(NS(id, "result"))
+}
+
+block_output.model_block <- function(x, result, session) {
+  renderPrint(result)
+}
+```
+
+## Adding a new block (3/5)
+
+3. (Optionally) preview the block in a standalone app
+
+```{r, eval = FALSE}
+#| echo: true
+serve(new_lm_block(), dat = datasets::attitude)
+```
+
+![Preview of an lm block](img/lm_block.png)
+
+## Adding a new block (4/5)
+
+4. Register the block for use in a dashboard
+
+```{r, eval = FALSE}
+#| echo: true
+register_block(
+  new_lm_block,
+  name = "LM block",
+  description = "Linear model block"
+)
+```
+
+## Adding a new block (5/5)
+
+Our current (WIP) block extension packages:
+
+* [cynkra/blockr.dplyr](https://github.com/cynkra/blockr.dplyr)
+* [cynkra/blockr.ai](https://github.com/cynkra/blockr.ai)
+* [cynkra/blockr.io](https://github.com/cynkra/blockr.io)
+* [cynkra/blockr.db](https://github.com/cynkra/blockr.db)
+* [cynkra/blockr.gt](https://github.com/cynkra/blockr.gt)
+* [cynkra/blockr.ggplot](https://github.com/cynkra/blockr.ggplot)
+
+Your own?
+
+## Extending the front-end (1/2)
+
+A set of plugins (each a shiny module) can be user-supplied:
+
+* `preserve_board`: Serialization/deserialization
+* `manage_*`: Add/remove `blocks`, `links` and `stacks`
+* `notify_user`: Handling of notifications
+* `generate_code`: Code export
+* `edit_*`: Per `block`/`stack` options
+
+## Extending the front-end (2/2)
+
+::: columns
+::: {.column width="50%"}
+
+```r
+serve(
+  new_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/core_ui.png)
+
+:::
+
+::: {.column width="50%"}
+
+```r
+serve(
+  new_custom_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/custom_ui.png)
+
+:::
+:::
+
+# Challenges
+
+## Limitations of the shiny API
+
+- Remove ([#2439](https://github.com/rstudio/shiny/issues/2439)) or reorder ([#4190](https://github.com/rstudio/shiny/issues/4190)) entries in a `reactiveValues` object: for variadic blocks (e.g. `rbind`) we need to be able to grow, shrink and reorder entries.
+- Cleanup of dynamically created modules ([#2281](https://github.com/rstudio/shiny/issues/2281)): blocks (and stacks) are represented by modules which are dynamically added and removed.
+
+In both cases we were able to come up with solutions (that circumvent the public API).
+
+# Outro
+
+## A collaborative effort
+
+Joint work with David Granjon ([cynkra GmbH](https://cynkra.com)),
+
+with contributions by John Coene ([The Y Company](https://the-y-company.com)), Karma Tarap ([Bristol-Myers Squibb](https://www.bms.com)) and Christoph Sax ([cynkra GmbH](https://cynkra.com)),
+
+funded by [Bristol-Myers Squibb](https://www.bms.com).
+
+## Further materials
+
+- Prototype repo [BristolMyersSquibb/blockr](https://github.com/BristolMyersSquibb/blockr)
+- Talk by David at useR 2024 in Salzburg ([slides](https://bristolmyerssquibb.github.io/useR2024))
+- Workshop at "R in Pharma" ([Video](https://www.youtube.com/watch?v=PQvTQqcmadY))
+- Discussion of prototype shortcomings and UI [wire-framing](https://excalidraw.com/#json=qYnQEvkzPgunMbErr4ulx,2c4c1kA16rY1Owhg54gPsQ)
+- Re-write repo [cynkra/blockr.core](https://github.com/cynkra/blockr.core) with front-end package [cynkra/blockr.ui](https://github.com/cynkra/blockr.ui)
+
+# Thanks for having me!
+
+# Backup
+
+## Interactive blockr dashboard {transition="slide-in none-out"}
+
+![Dashboard builder with graph overview](img/flights_2.png)
+
+## Interactive blockr dashboard {transition="none-in slide-out"}
+
+![Dashboard view](img/flights_3.png)
+
+## Extending the front-end (2/2) {transition="slide-in none-out"}
+
+::: columns
+::: {.column width="50%"}
+
+```r
+serve(
+  new_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/core_block.png)
+
+:::
+
+::: {.column width="50%"}
+
+```r
+serve(
+  new_custom_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/custom_block.png)
+
+:::
+:::
+
+## Extending the front-end (2/2) {transition="none"}
+
+::: columns
+::: {.column width="50%"}
+
+```r
+serve(
+  new_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/core_link.png)
+
+:::
+
+::: {.column width="50%"}
+
+```r
+serve(
+  new_custom_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/custom_link.png)
+
+:::
+:::
+
+## Extending the front-end (2/2) {transition="none-in slide-out"}
+
+::: columns
+::: {.column width="50%"}
+
+```r
+serve(
+  new_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/core_stack.png)
+
+:::
+
+::: {.column width="50%"}
+
+```r
+serve(
+  new_custom_board(
+    c(a = new_dataset_block("mtcars"))
+  )
+)
+```
+
+![](img/custom_stack.png)
+
+:::
+:::
