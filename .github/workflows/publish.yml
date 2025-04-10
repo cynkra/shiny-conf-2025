@@ -32,6 +32,7 @@ jobs:
             any::rmarkdown
             any::dplyr
             any::ggplot2
+            any::nycflights13
 
       - name: Render and publish
         uses: quarto-dev/quarto-actions/publish@v2
