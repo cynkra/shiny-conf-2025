@@ -1,1 +1,2 @@
-shiny-conf_files
+*_files
+/.quarto/
